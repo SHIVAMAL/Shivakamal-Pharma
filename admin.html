@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="mr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shivkamal Pharma | Admin</title>
+<style>
+body{margin:0;background:#f5f8f8;color:#17343a;font-family:system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1050px;margin:auto;padding:25px 18px}
+.box{background:#fff;padding:22px;border-radius:18px;box-shadow:0 8px 25px #17343a12;margin-bottom:18px}
+h1{color:#0d6670}.row{display:flex;gap:10px;flex-wrap:wrap}input,button{padding:12px;border-radius:10px;border:1px solid #ccdcdc;font-size:15px}button{background:#0d6670;color:white;border:0;font-weight:700;cursor:pointer}.danger{background:#b63b3b}
+#login{max-width:420px;margin:70px auto}.status{padding:12px;border-radius:10px;background:#eef7f7;margin-top:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}.item{background:#f8fbfb;border-radius:12px;overflow:hidden}.item img{width:100%;aspect-ratio:1;object-fit:cover}.item .b{padding:9px;font-size:12px}.item button{margin:0 9px 10px;padding:8px}
+small{color:#6d7b7e}
+</style>
+</head>
+<body><div class="wrap">
+<div id="login" class="box">
+<h1>Admin Login</h1><div class="row"><input id="u" placeholder="Username" value="admin"><input id="p" type="password" placeholder="Password"></div>
+<button onclick="login()">Login</button><div id="msg"></div>
+</div>
+<div id="panel" style="display:none">
+<div class="box"><h1>Shivkamal Pharma — Admin Panel</h1>
+<p>फोटो upload फक्त इथून होईल. <b>Duplicate फोटो system SHA-256 hash ने आपोआप reject करेल.</b></p>
+<div class="row"><input id="files" type="file" accept="image/*" multiple><button onclick="upload()">Upload Photos</button><button onclick="logout()" class="danger">Logout</button></div>
+<div id="status" class="status">Ready.</div></div>
+<div class="box"><h2>Catalogue Photos</h2><div id="grid" class="grid"></div></div>
+</div></div>
+<script>
+async function check(){let r=await fetch('/api/me');let x=await r.json();if(x.admin){document.getElementById('login').style.display='none';document.getElementById('panel').style.display='block';load();}}
+async function login(){let r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value,password:p.value})});let x=await r.json();if(r.ok){check()}else{msg.textContent=x.error}}
+async function upload(){const fs=document.getElementById('files').files;if(!fs.length)return;const fd=new FormData();for(const f of fs)fd.append('photos',f);let r=await fetch('/api/upload',{method:'POST',body:fd});let x=await r.json();status.innerHTML=`Added: <b>${x.added?.length||0}</b> &nbsp; Duplicate rejected: <b>${x.duplicates?.length||0}</b>${x.duplicates?.length?'<br>'+x.duplicates.join(', '):''}`;load();}
+async function load(){let r=await fetch('/api/products');let a=await r.json();grid.innerHTML=a.map(x=>`<div class="item"><img src="${x.url}" loading="lazy"><div class="b">${x.original_name}</div><button class="danger" onclick="del(${x.id})">Delete</button></div>`).join('')||'<small>No photos yet.</small>'}
+async function del(id){if(!confirm('हा फोटो delete करायचा?'))return;await fetch('/api/products/'+id,{method:'DELETE'});load();}
+async function logout(){await fetch('/api/logout',{method:'POST'});location.reload()} check();
+</script>
+</body></html>

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="mr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shivkamal Pharma | Latur</title>
+<style>
+:root{--teal:#0d6670;--gold:#d9a441;--ink:#17343a;--bg:#f5f8f8}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:white;border-bottom:1px solid #dce7e8;position:sticky;top:0;z-index:5}
+.nav{max-width:1180px;margin:auto;padding:10px 18px;display:flex;align-items:center;gap:16px}
+.logo{height:62px;width:62px;object-fit:contain;border-radius:12px}.brand{font-weight:800;font-size:22px;color:var(--teal)}.sub{font-size:13px;color:#6b7779}
+.spacer{flex:1}.admin{background:var(--teal);color:white;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:700}
+.hero{max-width:1180px;margin:18px auto;padding:0 18px}.heroCard{background:white;border-radius:22px;overflow:hidden;box-shadow:0 10px 35px #17343a16;display:grid;grid-template-columns:1.1fr .9fr}
+.heroImg{width:100%;height:310px;object-fit:cover}.heroText{padding:30px}.heroText h1{font-size:36px;margin:0 0 8px;color:var(--teal)}.heroText p{color:#667477;line-height:1.6}
+.search{max-width:1180px;margin:22px auto;padding:0 18px}.search input{width:100%;padding:15px 18px;border:1px solid #ccdcdc;border-radius:14px;font-size:16px;outline:none}
+.gallery{max-width:1180px;margin:0 auto;padding:0 18px 50px;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px}
+.card{background:white;border-radius:16px;overflow:hidden;box-shadow:0 5px 18px #17343a12}.card img{width:100%;aspect-ratio:1;object-fit:cover;display:block}.caption{padding:10px 12px;font-size:13px;word-break:break-word}
+.empty{text-align:center;grid-column:1/-1;padding:50px;color:#718082}
+@media(max-width:750px){.heroCard{grid-template-columns:1fr}.heroImg{height:220px}.heroText h1{font-size:29px}.brand{font-size:18px}}
+</style>
+</head>
+<body>
+<header><div class="nav">
+<img class="logo" src="/logo.jpg" onerror="this.style.display='none'">
+<div><div class="brand">SHIVKAMAL PHARMA</div><div class="sub">Wholesale Medicine Catalogue • Latur</div></div>
+<div class="spacer"></div><a class="admin" href="/admin.html">Admin</a>
+</div></header>
+<section class="hero"><div class="heroCard">
+<img class="heroImg" src="/shop.jpg">
+<div class="heroText"><h1>Shivkamal Pharma</h1><p>औषधांची आणि उपलब्ध products ची photo catalogue. Customer फक्त catalogue पाहू शकतो; फोटो upload करण्याचा अधिकार फक्त Admin कडे आहे.</p><p><b>पत्ता:</b> दुकान नं. 62, आदर्श शॉपिंग कॉम्प्लेक्स, आदर्श कॉलनी, औसा रोड, लातूर</p><p><b>मो:</b> 9067239822</p></div>
+</div></section>
+<div class="search"><input id="q" placeholder="🔍 Product / Medicine photo search करा..."></div>
+<section class="gallery" id="gallery"><div class="empty">Catalogue loading...</div></section>
+<script>
+let all=[];
+async function load(){const r=await fetch('/api/products'); all=await r.json(); render();}
+function render(){const q=document.getElementById('q').value.toLowerCase().trim(); const rows=all.filter(x=>x.original_name.toLowerCase().includes(q)); const g=document.getElementById('gallery');
+g.innerHTML=rows.length?rows.map(x=>`<div class="card"><img src="${x.url}" loading="lazy"><div class="caption">${x.original_name}</div></div>`).join(''):'<div class="empty">या search साठी फोटो सापडला नाही.</div>'}
+document.getElementById('q').addEventListener('input',render); load();
+</script>
+</body></html>
