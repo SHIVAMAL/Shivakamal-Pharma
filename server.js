@@ -50,9 +50,8 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: { httpOnly: true, sameSite: "lax", secure: false }
-}));
-app.use(express.static(path.join(__dirname, "public")));
 
+app.use(express.static(__dirname));
 function requireAdmin(req, res, next) {
   if (!req.session.admin) return res.status(401).json({ error: "Admin login required." });
   next();
