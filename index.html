@@ -35,8 +35,8 @@ header{background:white;border-bottom:1px solid #dce7e8;position:sticky;top:0;z-
 <script>
 let all=[];
 async function load(){const r=await fetch('/api/products'); all=await r.json(); render();}
-function render(){const q=document.getElementById('q').value.toLowerCase().trim(); const rows=all.filter(x=>x.original_name.toLowerCase().includes(q)); const g=document.getElementById('gallery');
-g.innerHTML=rows.length?rows.map(x=>`<div class="card"><img src="${x.url}" loading="lazy"><div class="caption">${x.original_name}</div></div>`).join(''):'<div class="empty">या search साठी फोटो सापडला नाही.</div>'}
+function render(){const q=document.getElementById('q').value.toLowerCase().trim(); const rows=all.filter(x=>(x.product_name||'').toLowerCase().includes(q)||x.original_name.toLowerCase().includes(q)); const g=document.getElementById('gallery');
+g.innerHTML=rows.length?rows.map(x=>`<div class="card"><img src="${x.url}" loading="lazy"><div class="caption"><b>${x.product_name||x.original_name}</b><br><small>${x.original_name}</small></div></div>`).join(''):'<div class="empty">या search साठी फोटो सापडला नाही.</div>'}
 document.getElementById('q').addEventListener('input',render); load();
 </script>
 </body></html>

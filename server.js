@@ -22,10 +22,12 @@ CREATE TABLE IF NOT EXISTS products (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   filename TEXT NOT NULL,
   original_name TEXT NOT NULL,
+  product_name TEXT NOT NULL DEFAULT '',
   sha256 TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
 `);
+try { db.exec("ALTER TABLE products ADD COLUMN product_name TEXT NOT NULL DEFAULT ''"); } catch (e) { if (!String(e.message).includes('duplicate column name')) throw e; }
 
 const storage = multer.diskStorage({
   destination: (_, __, cb) => cb(null, uploadDir),
@@ -51,15 +53,15 @@ app.use(session({
   saveUninitialized: false,
   cookie: { httpOnly: true, sameSite: "lax", secure: false }
 }));
-app.use(express.static(__dirname));
-app.use("/uploads", express.static(path.join(__dirname, "public", "uploads")));
+app.use(express.static(path.join(__dirname, "public")));
+
 function requireAdmin(req, res, next) {
   if (!req.session.admin) return res.status(401).json({ error: "Admin login required." });
   next();
 }
 
 app.get("/api/products", (_, res) => {
-  const rows = db.prepare("SELECT id, filename, original_name, created_at FROM products ORDER BY id DESC").all();
+  const rows = db.prepare("SELECT id, filename, original_name, product_name, created_at FROM products ORDER BY id DESC").all();
   res.json(rows.map(r => ({ ...r, url: `/uploads/${r.filename}` })));
 });
 
@@ -79,6 +81,11 @@ app.post("/api/logout", (req, res) => {
 app.get("/api/me", (req, res) => res.json({ admin: !!req.session.admin }));
 
 app.post("/api/upload", requireAdmin, upload.array("photos", 100), (req, res) => {
+  const productName = String(req.body.product_name || "").trim();
+  if (!productName) {
+    for (const file of req.files || []) { if (fs.existsSync(file.path)) fs.unlinkSync(file.path); }
+    return res.status(400).json({ error: "Medicine / Product Name is required." });
+  }
   const added = [];
   const duplicates = [];
 
@@ -91,11 +98,19 @@ app.post("/api/upload", requireAdmin, upload.array("photos", 100), (req, res) =>
       continue;
     }
     db.prepare(
-      "INSERT INTO products (filename, original_name, sha256) VALUES (?, ?, ?)"
-    ).run(file.filename, file.originalname, hash);
+      "INSERT INTO products (filename, original_name, product_name, sha256) VALUES (?, ?, ?, ?)"
+    ).run(file.filename, file.originalname, productName, hash);
     added.push(file.originalname);
   }
   res.json({ added, duplicates });
+});
+
+app.put("/api/products/:id", requireAdmin, (req, res) => {
+  const productName = String(req.body.product_name || "").trim();
+  if (!productName) return res.status(400).json({ error: "Medicine / Product Name is required." });
+  const result = db.prepare("UPDATE products SET product_name = ? WHERE id = ?").run(productName, req.params.id);
+  if (!result.changes) return res.status(404).json({ error: "Not found" });
+  res.json({ ok: true });
 });
 
 app.delete("/api/products/:id", requireAdmin, (req, res) => {
