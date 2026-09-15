@@ -26,13 +26,15 @@ CREATE TABLE IF NOT EXISTS products (
   product_name TEXT NOT NULL DEFAULT '',
   content TEXT NOT NULL DEFAULT '',
   ocr_text TEXT NOT NULL DEFAULT '',
+  search_text TEXT NOT NULL DEFAULT '',
   sha256 TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 )`);
 for (const sql of [
   "ALTER TABLE products ADD COLUMN product_name TEXT NOT NULL DEFAULT ''",
   "ALTER TABLE products ADD COLUMN content TEXT NOT NULL DEFAULT ''",
-  "ALTER TABLE products ADD COLUMN ocr_text TEXT NOT NULL DEFAULT ''"
+  "ALTER TABLE products ADD COLUMN ocr_text TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE products ADD COLUMN search_text TEXT NOT NULL DEFAULT ''"
 ]) {
   try { db.exec(sql); } catch (e) {
     if (!String(e.message).toLowerCase().includes("duplicate column name")) throw e;
@@ -73,7 +75,7 @@ function requireAdmin(req, res, next) {
 }
 
 app.get("/api/products", (_, res) => {
-  const rows = db.prepare("SELECT id, filename, original_name, product_name, content, ocr_text, created_at FROM products ORDER BY id DESC").all();
+  const rows = db.prepare("SELECT id, filename, original_name, product_name, content, ocr_text, search_text, created_at FROM products ORDER BY id DESC").all();
   res.json(rows.map(r => ({ ...r, url: `/uploads/${r.filename}` })));
 });
 
@@ -92,19 +94,44 @@ app.post("/api/logout", (req, res) => {
 
 app.get("/api/me", (req, res) => res.json({ admin: !!req.session.admin }));
 
+let ocrWorkerPromise = null;
+
+async function getOcrWorker() {
+  if (!ocrWorkerPromise) {
+    ocrWorkerPromise = createWorker("eng").catch(err => {
+      ocrWorkerPromise = null;
+      throw err;
+    });
+  }
+  return ocrWorkerPromise;
+}
+
+function normalizeSearchText(text) {
+  return String(text || "")
+    .normalize("NFKC")
+    .replace(/[|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 async function ocrImage(filePath) {
-  let worker;
   try {
-    worker = await createWorker("eng");
-    const result = await worker.recognize(filePath);
-    return String(result?.data?.text || "").replace(/\s+/g, " ").trim();
+    const worker = await getOcrWorker();
+    const results = [];
+    for (const psm of ["6", "11"]) {
+      try {
+        const result = await worker.recognize(filePath, { tessedit_pageseg_mode: psm });
+        const text = String(result?.data?.text || "").trim();
+        if (text) results.push(text);
+      } catch (e) {
+        console.error(`OCR PSM ${psm} failed:`, e.message);
+      }
+    }
+    return results.join(" ").replace(/\s+/g, " ").trim();
   } catch (e) {
     console.error("OCR failed:", e.message);
     return "";
-  } finally {
-    if (worker) {
-      try { await worker.terminate(); } catch (_) {}
-    }
   }
 }
 
@@ -115,6 +142,18 @@ function guessedProductName(text, fallback) {
     return clean.length >= 3 && clean.length <= 80 && /[A-Za-z]/.test(clean);
   });
   return good || fallback || "";
+}
+
+async function reindexMissingOcr() {
+  const rows = db.prepare("SELECT id, filename, original_name, product_name, content, ocr_text FROM products WHERE TRIM(ocr_text) = '' OR TRIM(search_text) = ''").all();
+  for (const row of rows) {
+    const filePath = path.join(uploadDir, row.filename);
+    if (!fs.existsSync(filePath)) continue;
+    const ocrText = row.ocr_text || await ocrImage(filePath);
+    const productName = row.product_name || guessedProductName(ocrText, path.parse(row.original_name).name);
+    const searchText = normalizeSearchText([productName, row.content, ocrText, row.original_name].join(" "));
+    db.prepare("UPDATE products SET product_name = ?, ocr_text = ?, search_text = ? WHERE id = ?").run(productName, ocrText, searchText, row.id);
+  }
 }
 
 app.post("/api/upload", requireAdmin, upload.array("photos", 100), async (req, res) => {
@@ -134,10 +173,11 @@ app.post("/api/upload", requireAdmin, upload.array("photos", 100), async (req, r
     // OCR automatically reads the visible medicine/brand/content text.
     const ocrText = await ocrImage(file.path);
     const guessedName = guessedProductName(ocrText, path.parse(file.originalname).name);
+    const searchText = normalizeSearchText([guessedName, "", ocrText, file.originalname].join(" "));
 
     db.prepare(
-      "INSERT INTO products (filename, original_name, product_name, content, ocr_text, sha256) VALUES (?, ?, ?, ?, ?, ?)"
-    ).run(file.filename, file.originalname, guessedName, "", ocrText, hash);
+      "INSERT INTO products (filename, original_name, product_name, content, ocr_text, search_text, sha256) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(file.filename, file.originalname, guessedName, "", ocrText, searchText, hash);
 
     added.push(file.originalname);
     results.push({ file: file.originalname, detected: ocrText || guessedName });
@@ -150,9 +190,22 @@ app.put("/api/products/:id", requireAdmin, (req, res) => {
   const productName = String(req.body.product_name || "").trim();
   const content = String(req.body.content || "").trim();
   if (!productName && !content) return res.status(400).json({ error: "Product name किंवा content द्या." });
-  const result = db.prepare("UPDATE products SET product_name = ?, content = ? WHERE id = ?").run(productName, content, req.params.id);
+  const row = db.prepare("SELECT ocr_text, original_name FROM products WHERE id = ?").get(req.params.id);
+  if (!row) return res.status(404).json({ error: "Not found" });
+  const searchText = normalizeSearchText([productName, content, row.ocr_text, row.original_name].join(" "));
+  const result = db.prepare("UPDATE products SET product_name = ?, content = ?, search_text = ? WHERE id = ?").run(productName, content, searchText, req.params.id);
   if (!result.changes) return res.status(404).json({ error: "Not found" });
   res.json({ ok: true });
+});
+
+app.post("/api/reindex-ocr", requireAdmin, async (req, res) => {
+  try {
+    await reindexMissingOcr();
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("OCR reindex failed:", e);
+    res.status(500).json({ error: "OCR re-scan failed." });
+  }
 });
 
 app.delete("/api/products/:id", requireAdmin, (req, res) => {
@@ -169,4 +222,7 @@ app.use((err, req, res, next) => {
   next();
 });
 
-app.listen(PORT, () => console.log(`Shivkamal Pharma running on http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Shivkamal Pharma running on http://localhost:${PORT}`);
+  reindexMissingOcr().catch(err => console.error("Startup OCR reindex failed:", err.message));
+});
