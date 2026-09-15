@@ -5,32 +5,23 @@
 <title>Shivkamal Pharma | Admin</title>
 <style>
 body{margin:0;background:#f5f8f8;color:#17343a;font-family:system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:1050px;margin:auto;padding:25px 18px}
-.box{background:#fff;padding:22px;border-radius:18px;box-shadow:0 8px 25px #17343a12;margin-bottom:18px}
-h1{color:#0d6670}.row{display:flex;gap:10px;flex-wrap:wrap}input,button{padding:12px;border-radius:10px;border:1px solid #ccdcdc;font-size:15px}button{background:#0d6670;color:white;border:0;font-weight:700;cursor:pointer}.danger{background:#b63b3b}
-#login{max-width:420px;margin:70px auto}.status{padding:12px;border-radius:10px;background:#eef7f7;margin-top:12px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}.item{background:#f8fbfb;border-radius:12px;overflow:hidden}.item img{width:100%;aspect-ratio:1;object-fit:cover}.item .b{padding:9px;font-size:12px}.item button{margin:0 9px 10px;padding:8px}
-small{color:#6d7b7e}
-</style>
-</head>
+.box{background:#fff;padding:22px;border-radius:18px;box-shadow:0 8px 25px #17343a12;margin-bottom:18px}h1{color:#0d6670}.row{display:flex;gap:10px;flex-wrap:wrap}input,button{padding:12px;border-radius:10px;border:1px solid #ccdcdc;font-size:15px}button{background:#0d6670;color:white;border:0;font-weight:700;cursor:pointer}.danger{background:#b63b3b}
+#login{max-width:420px;margin:70px auto}.status{padding:12px;border-radius:10px;background:#eef7f7;margin-top:12px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px}.item{background:#f8fbfb;border-radius:12px;overflow:hidden}.item img{width:100%;aspect-ratio:1;object-fit:cover}.item .b{padding:9px;font-size:12px}.item button{margin:0 9px 10px;padding:8px}small{color:#6d7b7e}.hint{font-size:13px;color:#647578;line-height:1.5}
+</style></head>
 <body><div class="wrap">
-<div id="login" class="box">
-<h1>Admin Login</h1><div class="row"><input id="u" placeholder="Username" value="admin"><input id="p" type="password" placeholder="Password"></div>
-<button onclick="login()">Login</button><div id="msg"></div>
-</div>
-<div id="panel" style="display:none">
-<div class="box"><h1>Shivkamal Pharma — Admin Panel</h1>
-<p>फोटो upload फक्त इथून होईल. <b>Duplicate फोटो system SHA-256 hash ने आपोआप reject करेल.</b></p>
-<div class="row"><input id="productName" placeholder="Medicine / Product Name (उदा. Ceftriaxone Injection)" style="flex:1;min-width:240px"><input id="files" type="file" accept="image/*" multiple><button onclick="upload()">Upload Photos</button><button onclick="logout()" class="danger">Logout</button></div>
+<div id="login" class="box"><h1>Admin Login</h1><div class="row"><input id="u" placeholder="Username" value="admin"><input id="p" type="password" placeholder="Password"></div><button onclick="login()">Login</button><div id="msg"></div></div>
+<div id="panel" style="display:none"><div class="box"><h1>Shivkamal Pharma — Admin Panel</h1>
+<p><b>फक्त फोटो upload करा.</b> Website फोटोमधील visible English text OCR ने आपोआप वाचून search साठी save करेल. त्यामुळे Brand name, Content/Salt किंवा packaging वरचा text search करता येईल.</p>
+<div class="row"><input id="files" type="file" accept="image/*" multiple><button onclick="upload()">Upload Photos</button><button onclick="logout()" class="danger">Logout</button></div>
+<div class="hint">उदा. फोटोवर <b>OFRAMAX</b> आणि <b>Ceftriaxone</b> दिसत असेल तर दोन्ही शब्द search मध्ये वापरता येतील. नाव manually टाइप करण्याची गरज नाही.</div>
 <div id="status" class="status">Ready.</div></div>
-<div class="box"><h2>Catalogue Photos</h2><div id="grid" class="grid"></div></div>
-</div></div>
+<div class="box"><h2>Catalogue Photos</h2><div id="grid" class="grid"></div></div></div></div>
 <script>
 async function check(){let r=await fetch('/api/me');let x=await r.json();if(x.admin){document.getElementById('login').style.display='none';document.getElementById('panel').style.display='block';load();}}
 async function login(){let r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value,password:p.value})});let x=await r.json();if(r.ok){check()}else{msg.textContent=x.error}}
-async function upload(){const fs=document.getElementById('files').files;const name=document.getElementById('productName').value.trim();if(!name){status.textContent='आधी Medicine / Product Name टाका.';return;}if(!fs.length){status.textContent='आधी फोटो निवडा.';return;}const fd=new FormData();fd.append('product_name',name);for(const f of fs)fd.append('photos',f);let r=await fetch('/api/upload',{method:'POST',body:fd});let x=await r.json();status.innerHTML=`Added: <b>${x.added?.length||0}</b> &nbsp; Duplicate rejected: <b>${x.duplicates?.length||0}</b>${x.duplicates?.length?'<br>'+x.duplicates.join(', '):''}`;load();}
-async function load(){let r=await fetch('/api/products');let a=await r.json();grid.innerHTML=a.map(x=>`<div class="item"><img src="${x.url}" loading="lazy"><div class="b"><b>${x.product_name||x.original_name}</b><br><small>${x.original_name}</small></div><div class="row" style="padding:0 9px 10px"><button onclick="editName(${x.id},${JSON.stringify(x.product_name||x.original_name)})">Edit Name</button><button class="danger" onclick="del(${x.id})">Delete</button></div></div>`).join('')||'<small>No photos yet.</small>'}
-async function editName(id,current){const name=prompt('Medicine / Product Name',current);if(name===null||!name.trim())return;const r=await fetch('/api/products/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({product_name:name.trim()})});if(!r.ok){const x=await r.json();alert(x.error||'Update failed');return;}load();}
-async function del(id){if(!confirm('हा फोटो delete करायचा?'))return;await fetch('/api/products/'+id,{method:'DELETE'});load();}
-async function logout(){await fetch('/api/logout',{method:'POST'});location.reload()} check();
-</script>
-</body></html>
+async function upload(){const fs=document.getElementById('files').files;if(!fs.length){status.textContent='आधी फोटो निवडा.';return;}status.textContent='फोटो upload + OCR scan चालू आहे… कृपया page बंद करू नका.';const fd=new FormData();for(const f of fs)fd.append('photos',f);let r=await fetch('/api/upload',{method:'POST',body:fd});let x=await r.json();if(!r.ok){status.textContent=x.error||'Upload failed';return;}let detected=(x.results||[]).map(a=>`${a.file}: ${a.detected||'text not detected'}`).join('<br>');status.innerHTML=`Added: <b>${x.added?.length||0}</b> &nbsp; Duplicate rejected: <b>${x.duplicates?.length||0}</b>${x.duplicates?.length?'<br>Duplicate: '+x.duplicates.join(', '):''}${detected?'<hr><b>OCR detected:</b><br>'+detected:''}`;document.getElementById('files').value='';load();}
+async function load(){let r=await fetch('/api/products');let a=await r.json();grid.innerHTML=a.map(x=>`<div class="item"><img src="${x.url}" loading="lazy"><div class="b"><b>${esc(x.product_name||x.original_name)}</b>${x.content?`<br><b>Content:</b> ${esc(x.content)}`:''}<br><small>OCR: ${esc((x.ocr_text||'').slice(0,180))}</small></div><div class="row" style="padding:0 9px 10px"><button onclick="edit(${x.id},${JSON.stringify(x.product_name||'')},${JSON.stringify(x.content||'')})">Edit</button><button class="danger" onclick="del(${x.id})">Delete</button></div></div>`).join('')||'<small>No photos yet.</small>'}
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+async function edit(id,currentName,currentContent){const name=prompt('Brand / Product Name (optional)',currentName);if(name===null)return;const content=prompt('Content / Salt (optional)',currentContent);if(content===null)return;if(!name.trim()&&!content.trim())return;const r=await fetch('/api/products/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({product_name:name.trim(),content:content.trim()})});if(!r.ok){const x=await r.json();alert(x.error||'Update failed');return;}load();}
+async function del(id){if(!confirm('हा फोटो delete करायचा?'))return;await fetch('/api/products/'+id,{method:'DELETE'});load();}async function logout(){await fetch('/api/logout',{method:'POST'});location.reload()}check();
+</script></body></html>

@@ -5,6 +5,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const Database = require("better-sqlite3");
+const { createWorker } = require("tesseract.js");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,11 +24,20 @@ CREATE TABLE IF NOT EXISTS products (
   filename TEXT NOT NULL,
   original_name TEXT NOT NULL,
   product_name TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  ocr_text TEXT NOT NULL DEFAULT '',
   sha256 TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-)
-`);
-try { db.exec("ALTER TABLE products ADD COLUMN product_name TEXT NOT NULL DEFAULT ''"); } catch (e) { if (!String(e.message).includes('duplicate column name')) throw e; }
+)`);
+for (const sql of [
+  "ALTER TABLE products ADD COLUMN product_name TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE products ADD COLUMN content TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE products ADD COLUMN ocr_text TEXT NOT NULL DEFAULT ''"
+]) {
+  try { db.exec(sql); } catch (e) {
+    if (!String(e.message).toLowerCase().includes("duplicate column name")) throw e;
+  }
+}
 
 const storage = multer.diskStorage({
   destination: (_, __, cb) => cb(null, uploadDir),
@@ -53,9 +63,9 @@ app.use(session({
   saveUninitialized: false,
   cookie: { httpOnly: true, sameSite: "lax", secure: false }
 }));
+// Files in this project are at repository root (not inside /public).
 app.use(express.static(__dirname));
-app.use("/uploads", express.static(path.join(__dirname, "public", "uploads")));
-
+app.use("/uploads", express.static(uploadDir));
 
 function requireAdmin(req, res, next) {
   if (!req.session.admin) return res.status(401).json({ error: "Admin login required." });
@@ -63,7 +73,7 @@ function requireAdmin(req, res, next) {
 }
 
 app.get("/api/products", (_, res) => {
-  const rows = db.prepare("SELECT id, filename, original_name, product_name, created_at FROM products ORDER BY id DESC").all();
+  const rows = db.prepare("SELECT id, filename, original_name, product_name, content, ocr_text, created_at FROM products ORDER BY id DESC").all();
   res.json(rows.map(r => ({ ...r, url: `/uploads/${r.filename}` })));
 });
 
@@ -82,35 +92,65 @@ app.post("/api/logout", (req, res) => {
 
 app.get("/api/me", (req, res) => res.json({ admin: !!req.session.admin }));
 
-app.post("/api/upload", requireAdmin, upload.array("photos", 100), (req, res) => {
-  const productName = String(req.body.product_name || "").trim();
-  if (!productName) {
-    for (const file of req.files || []) { if (fs.existsSync(file.path)) fs.unlinkSync(file.path); }
-    return res.status(400).json({ error: "Medicine / Product Name is required." });
+async function ocrImage(filePath) {
+  let worker;
+  try {
+    worker = await createWorker("eng");
+    const result = await worker.recognize(filePath);
+    return String(result?.data?.text || "").replace(/\s+/g, " ").trim();
+  } catch (e) {
+    console.error("OCR failed:", e.message);
+    return "";
+  } finally {
+    if (worker) {
+      try { await worker.terminate(); } catch (_) {}
+    }
   }
+}
+
+function guessedProductName(text, fallback) {
+  const lines = String(text || "").split(/\n+/).map(s => s.trim()).filter(Boolean);
+  const good = lines.find(line => {
+    const clean = line.replace(/[^A-Za-z0-9+&() .\/-]/g, " ").trim();
+    return clean.length >= 3 && clean.length <= 80 && /[A-Za-z]/.test(clean);
+  });
+  return good || fallback || "";
+}
+
+app.post("/api/upload", requireAdmin, upload.array("photos", 100), async (req, res) => {
   const added = [];
   const duplicates = [];
+  const results = [];
 
   for (const file of req.files || []) {
     const hash = crypto.createHash("sha256").update(fs.readFileSync(file.path)).digest("hex");
     const existing = db.prepare("SELECT id FROM products WHERE sha256 = ?").get(hash);
     if (existing) {
       duplicates.push(file.originalname);
-      fs.unlinkSync(file.path);
+      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
       continue;
     }
+
+    // OCR automatically reads the visible medicine/brand/content text.
+    const ocrText = await ocrImage(file.path);
+    const guessedName = guessedProductName(ocrText, path.parse(file.originalname).name);
+
     db.prepare(
-      "INSERT INTO products (filename, original_name, product_name, sha256) VALUES (?, ?, ?, ?)"
-    ).run(file.filename, file.originalname, productName, hash);
+      "INSERT INTO products (filename, original_name, product_name, content, ocr_text, sha256) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(file.filename, file.originalname, guessedName, "", ocrText, hash);
+
     added.push(file.originalname);
+    results.push({ file: file.originalname, detected: ocrText || guessedName });
   }
-  res.json({ added, duplicates });
+
+  res.json({ added, duplicates, results });
 });
 
 app.put("/api/products/:id", requireAdmin, (req, res) => {
   const productName = String(req.body.product_name || "").trim();
-  if (!productName) return res.status(400).json({ error: "Medicine / Product Name is required." });
-  const result = db.prepare("UPDATE products SET product_name = ? WHERE id = ?").run(productName, req.params.id);
+  const content = String(req.body.content || "").trim();
+  if (!productName && !content) return res.status(400).json({ error: "Product name किंवा content द्या." });
+  const result = db.prepare("UPDATE products SET product_name = ?, content = ? WHERE id = ?").run(productName, content, req.params.id);
   if (!result.changes) return res.status(404).json({ error: "Not found" });
   res.json({ ok: true });
 });
