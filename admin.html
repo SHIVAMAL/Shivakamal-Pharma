@@ -20,7 +20,45 @@ body{margin:0;background:#f5f8f8;color:#17343a;font-family:system-ui,-apple-syst
 async function check(){let r=await fetch('/api/me');let x=await r.json();if(x.admin){document.getElementById('login').style.display='none';document.getElementById('panel').style.display='block';load();}}
 async function login(){let r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u.value,password:p.value})});let x=await r.json();if(r.ok){check()}else{msg.textContent=x.error}}
 const statusEl=document.getElementById('status');
-async function upload(){const fs=document.getElementById('files').files;if(!fs.length){statusE1.textContent='आधी फोटो निवडा.';return;}status.textContent='फोटो upload + OCR scan चालू आहे… कृपया page बंद करू नका.';const fd=new FormData();for(const f of fs)fd.append('photos',f);let r=await fetch('/api/upload',{method:'POST',body:fd});let x=await r.json();if(!r.ok){status.textContent=x.error||'Upload failed';return;}let detected=(x.results||[]).map(a=>`${a.file}: ${a.detected||'text not detected'}`).join('<br>');status.innerHTML=`Added: <b>${x.added?.length||0}</b> &nbsp; Duplicate rejected: <b>${x.duplicates?.length||0}</b>${x.duplicates?.length?'<br>Duplicate: '+x.duplicates.join(', '):''}${detected?'<hr><b>OCR detected:</b><br>'+detected:''}`;document.getElementById('files').value='';load();}
+async function uploadPhotos(){
+  const fs=document.getElementById('files').files;
+
+  if(!fs.length){
+    statusEl.textContent='आधी फोटो निवडा.';
+    return;
+  }
+
+  statusEl.textContent='फोटो upload + OCR scan चालू आहे… कृपया page बंद करू नका.';
+
+  const fd=new FormData();
+  for(const f of fs) fd.append('photos',f);
+
+  try{
+    const r=await fetch('/api/upload',{method:'POST',body:fd});
+    const x=await r.json();
+
+    if(!r.ok){
+      statusEl.textContent=x.error||'Upload failed';
+      return;
+    }
+
+    let detected=(x.results||[])
+      .map(a=>`${a.file}: ${a.detected||'text not detected'}`)
+      .join('<br>');
+
+    statusEl.innerHTML=
+      `Added: <b>${x.added?.length||0}</b>
+      &nbsp; Duplicate rejected: <b>${x.duplicates?.length||0}</b>
+      ${x.duplicates?.length?'<br>Duplicate: '+x.duplicates.join(', '):''}
+      ${detected?'<hr><b>OCR detected:</b><br>'+detected:''}`;
+
+    document.getElementById('files').value='';
+    load();
+
+  }catch(e){
+    statusEl.textContent='Upload error: '+e.message;
+  }
+}
 async function rescan(){status.textContent="Existing photos चा OCR पुन्हा scan होत आहे…";const r=await fetch("/api/reindex-ocr",{method:"POST"});const x=await r.json();status.textContent=r.ok?"OCR re-scan पूर्ण. आता customer search तपासा.":(x.error||"OCR re-scan failed");load();}
 async function load(){let r=await fetch('/api/products');let a=await r.json();grid.innerHTML=a.map(x=>`<div class="item"><img src="${x.url}" loading="lazy"><div class="b"><b>${esc(x.product_name||x.original_name)}</b>${x.content?`<br><b>Content:</b> ${esc(x.content)}`:''}<br><small>OCR: ${esc((x.ocr_text||'').slice(0,180))}</small></div><div class="row" style="padding:0 9px 10px"><button onclick="edit(${x.id},${JSON.stringify(x.product_name||'')},${JSON.stringify(x.content||'')})">Edit</button><button class="danger" onclick="del(${x.id})">Delete</button></div></div>`).join('')||'<small>No photos yet.</small>'}
 function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
