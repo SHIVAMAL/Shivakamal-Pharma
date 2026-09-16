@@ -1,101 +1,87 @@
 const express = require("express");
 const session = require("express-session");
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
 const crypto = require("crypto");
-const Database = require("better-sqlite3");
+const { createClient } = require("@supabase/supabase-js");
 const { createWorker } = require("tesseract.js");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
 const ADMIN_USER = process.env.ADMIN_USER || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "ChangeMe123!";
+const SESSION_SECRET = process.env.SESSION_SECRET || "change-this-session-secret";
 
-const dataDir = path.join(__dirname, "data");
-const uploadDir = path.join(__dirname, "public", "uploads");
-fs.mkdirSync(dataDir, { recursive: true });
-fs.mkdirSync(uploadDir, { recursive: true });
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || "pharma-images";
 
-const db = new Database(path.join(dataDir, "catalogue.db"));
-db.exec(`
-CREATE TABLE IF NOT EXISTS products (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  filename TEXT NOT NULL,
-  original_name TEXT NOT NULL,
-  product_name TEXT NOT NULL DEFAULT '',
-  content TEXT NOT NULL DEFAULT '',
-  ocr_text TEXT NOT NULL DEFAULT '',
-  search_text TEXT NOT NULL DEFAULT '',
-  sha256 TEXT NOT NULL UNIQUE,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-)`);
-for (const sql of [
-  "ALTER TABLE products ADD COLUMN product_name TEXT NOT NULL DEFAULT ''",
-  "ALTER TABLE products ADD COLUMN content TEXT NOT NULL DEFAULT ''",
-  "ALTER TABLE products ADD COLUMN ocr_text TEXT NOT NULL DEFAULT ''",
-  "ALTER TABLE products ADD COLUMN search_text TEXT NOT NULL DEFAULT ''"
-]) {
-  try { db.exec(sql); } catch (e) {
-    if (!String(e.message).toLowerCase().includes("duplicate column name")) throw e;
-  }
-}
+const supabase = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false }
+    })
+  : null;
 
-const storage = multer.diskStorage({
-  destination: (_, __, cb) => cb(null, uploadDir),
-  filename: (_, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
-    cb(null, `${Date.now()}-${crypto.randomBytes(5).toString("hex")}${ext}`);
-  }
-});
 const upload = multer({
-  storage,
-  limits: { fileSize: 15 * 1024 * 1024 },
-  fileFilter: (_, file, cb) => {
-    const ok = /^image\/(jpeg|png|webp|gif)$/i.test(file.mimetype);
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024, files: 100 },
+  fileFilter: (_req, file, cb) => {
+    const ok = /^image\/(jpeg|png|webp|gif|jpg)$/i.test(file.mimetype);
     cb(ok ? null : new Error("Only image files are allowed."), ok);
   }
 });
 
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(session({
-  secret: process.env.SESSION_SECRET || "replace-this-session-secret",
+  secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: "lax", secure: false }
+  cookie: { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production" }
 }));
-// Files in this project are at repository root (not inside /public).
+
+// The project files are in the repository root.
 app.use(express.static(__dirname));
-app.use("/uploads", express.static(uploadDir));
+
+function requireSupabase(res) {
+  if (!supabase) {
+    res.status(503).json({
+      error: "Supabase is not configured. Add SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Render."
+    });
+    return false;
+  }
+  return true;
+}
 
 function requireAdmin(req, res, next) {
   if (!req.session.admin) return res.status(401).json({ error: "Admin login required." });
   next();
 }
 
-app.get("/api/products", (_, res) => {
-  const rows = db.prepare("SELECT id, filename, original_name, product_name, content, ocr_text, search_text, created_at FROM products ORDER BY id DESC").all();
-  res.json(rows.map(r => ({ ...r, url: `/uploads/${r.filename}` })));
-});
+function publicUrl(path) {
+  return `${SUPABASE_URL}/storage/v1/object/public/${encodeURIComponent(SUPABASE_BUCKET)}/${path
+    .split("/").map(encodeURIComponent).join("/")}`;
+}
 
-app.post("/api/login", (req, res) => {
-  const { username, password } = req.body || {};
-  if (username === ADMIN_USER && password === ADMIN_PASSWORD) {
-    req.session.admin = true;
-    return res.json({ ok: true });
-  }
-  res.status(401).json({ error: "Invalid admin credentials." });
-});
+function cleanText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
 
-app.post("/api/logout", (req, res) => {
-  req.session.destroy(() => res.json({ ok: true }));
-});
+function makeSearchText(row) {
+  return cleanText([
+    row.product_name,
+    row.content,
+    row.ocr_text,
+    row.filename,
+    row.original_name
+  ].filter(Boolean).join(" "));
+}
 
-app.get("/api/me", (req, res) => res.json({ admin: !!req.session.admin }));
+function sha256(buffer) {
+  return crypto.createHash("sha256").update(buffer).digest("hex");
+}
 
 let ocrWorkerPromise = null;
-
 async function getOcrWorker() {
   if (!ocrWorkerPromise) {
     ocrWorkerPromise = createWorker("eng").catch(err => {
@@ -106,123 +92,252 @@ async function getOcrWorker() {
   return ocrWorkerPromise;
 }
 
-function normalizeSearchText(text) {
-  return String(text || "")
-    .normalize("NFKC")
-    .replace(/[|]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
+async function runOcr(buffer) {
+  const worker = await getOcrWorker();
+  const result = await worker.recognize(buffer);
+  return cleanText(result?.data?.text || "");
 }
 
-async function ocrImage(filePath) {
+async function ensureBucket() {
+  if (!supabase) return;
+  const { data: buckets, error } = await supabase.storage.listBuckets();
+  if (error) throw error;
+  const exists = (buckets || []).some(b => b.name === SUPABASE_BUCKET);
+  if (!exists) {
+    const { error: createError } = await supabase.storage.createBucket(
+      SUPABASE_BUCKET,
+      { public: true, fileSizeLimit: "15MB", allowedMimeTypes: ["image/jpeg", "image/png", "image/webp", "image/gif"] }
+    );
+    if (createError && !/already exists/i.test(createError.message || "")) throw createError;
+  }
+}
+
+async function getProducts(q = "") {
+  if (!supabase) return null;
+  let query = supabase.from("products")
+    .select("id,filename,original_name,product_name,content,ocr_text,search_text,sha256,storage_path,created_at")
+    .order("created_at", { ascending: false });
+
+  if (q) query = query.ilike("search_text", `%${q}%`);
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  return (data || []).map(p => ({ ...p, url: publicUrl(p.storage_path) }));
+}
+
+app.get("/api/me", (req, res) => res.json({ admin: !!req.session.admin }));
+
+app.post("/api/login", (req, res) => {
+  const { username, password } = req.body || {};
+  if (username === ADMIN_USER && password === ADMIN_PASSWORD) {
+    req.session.admin = true;
+    return res.json({ ok: true });
+  }
+  res.status(401).json({ error: "Invalid username or password." });
+});
+
+app.post("/api/logout", (req, res) => {
+  req.session.destroy(() => res.json({ ok: true }));
+});
+
+app.get("/api/products", async (req, res) => {
+  if (!requireSupabase(res)) return;
   try {
-    const worker = await getOcrWorker();
-    const results = [];
-    for (const psm of ["6", "11"]) {
-      try {
-        const result = await worker.recognize(filePath, { tessedit_pageseg_mode: psm });
-        const text = String(result?.data?.text || "").trim();
-        if (text) results.push(text);
-      } catch (e) {
-        console.error(`OCR PSM ${psm} failed:`, e.message);
-      }
-    }
-    return results.join(" ").replace(/\s+/g, " ").trim();
-  } catch (e) {
-    console.error("OCR failed:", e.message);
-    return "";
+    const rows = await getProducts(cleanText(req.query.q));
+    res.json(rows);
+  } catch (err) {
+    console.error("Products error:", err);
+    res.status(500).json({ error: "Catalogue could not be loaded." });
   }
-}
-
-function guessedProductName(text, fallback) {
-  const lines = String(text || "").split(/\n+/).map(s => s.trim()).filter(Boolean);
-  const good = lines.find(line => {
-    const clean = line.replace(/[^A-Za-z0-9+&() .\/-]/g, " ").trim();
-    return clean.length >= 3 && clean.length <= 80 && /[A-Za-z]/.test(clean);
-  });
-  return good || fallback || "";
-}
-
-async function reindexMissingOcr() {
-  const rows = db.prepare("SELECT id, filename, original_name, product_name, content, ocr_text FROM products WHERE TRIM(ocr_text) = '' OR TRIM(search_text) = ''").all();
-  for (const row of rows) {
-    const filePath = path.join(uploadDir, row.filename);
-    if (!fs.existsSync(filePath)) continue;
-    const ocrText = row.ocr_text || await ocrImage(filePath);
-    const productName = row.product_name || guessedProductName(ocrText, path.parse(row.original_name).name);
-    const searchText = normalizeSearchText([productName, row.content, ocrText, row.original_name].join(" "));
-    db.prepare("UPDATE products SET product_name = ?, ocr_text = ?, search_text = ? WHERE id = ?").run(productName, ocrText, searchText, row.id);
-  }
-}
+});
 
 app.post("/api/upload", requireAdmin, upload.array("photos", 100), async (req, res) => {
+  if (!requireSupabase(res)) return;
+  const files = req.files || [];
+  if (!files.length) return res.status(400).json({ error: "No photos selected." });
+
   const added = [];
   const duplicates = [];
   const results = [];
 
-  for (const file of req.files || []) {
-    const hash = crypto.createHash("sha256").update(fs.readFileSync(file.path)).digest("hex");
-    const existing = db.prepare("SELECT id FROM products WHERE sha256 = ?").get(hash);
+  for (const file of files) {
+    const hash = sha256(file.buffer);
+
+    const { data: existing } = await supabase.from("products")
+      .select("id").eq("sha256", hash).maybeSingle();
+
     if (existing) {
       duplicates.push(file.originalname);
-      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
       continue;
     }
 
-    // OCR automatically reads the visible medicine/brand/content text.
-    const ocrText = await ocrImage(file.path);
-    const guessedName = guessedProductName(ocrText, path.parse(file.originalname).name);
-    const searchText = normalizeSearchText([guessedName, "", ocrText, file.originalname].join(" "));
+    let ocrText = "";
+    try {
+      ocrText = await runOcr(file.buffer);
+    } catch (err) {
+      console.error("OCR error:", err);
+    }
 
-    db.prepare(
-      "INSERT INTO products (filename, original_name, product_name, content, ocr_text, search_text, sha256) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    ).run(file.filename, file.originalname, guessedName, "", ocrText, searchText, hash);
+    const safeBase = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const storagePath = `medicines/${hash}-${safeBase}`;
 
-    added.push(file.originalname);
-    results.push({ file: file.originalname, detected: ocrText || guessedName });
+    const { error: storageError } = await supabase.storage
+      .from(SUPABASE_BUCKET)
+      .upload(storagePath, file.buffer, {
+        contentType: file.mimetype,
+        upsert: false
+      });
+
+    if (storageError) {
+      if (/already exists/i.test(storageError.message || "")) {
+        duplicates.push(file.originalname);
+        continue;
+      }
+      console.error("Storage upload error:", storageError);
+      continue;
+    }
+
+    const row = {
+      filename: safeBase,
+      original_name: file.originalname,
+      product_name: "",
+      content: "",
+      ocr_text: ocrText,
+      search_text: makeSearchText({
+        product_name: "",
+        content: "",
+        ocr_text: ocrText,
+        filename: safeBase,
+        original_name: file.originalname
+      }),
+      sha256: hash,
+      storage_path: storagePath
+    };
+
+    const { data, error: dbError } = await supabase.from("products")
+      .insert(row).select("id,filename,original_name,product_name,content,ocr_text,search_text,sha256,storage_path,created_at").single();
+
+    if (dbError) {
+      await supabase.storage.from(SUPABASE_BUCKET).remove([storagePath]);
+      console.error("Database insert error:", dbError);
+      continue;
+    }
+
+    added.push(data);
+    results.push({ file: file.originalname, detected: ocrText.slice(0, 300) });
   }
 
   res.json({ added, duplicates, results });
 });
 
-app.put("/api/products/:id", requireAdmin, (req, res) => {
-  const productName = String(req.body.product_name || "").trim();
-  const content = String(req.body.content || "").trim();
-  if (!productName && !content) return res.status(400).json({ error: "Product name किंवा content द्या." });
-  const row = db.prepare("SELECT ocr_text, original_name FROM products WHERE id = ?").get(req.params.id);
-  if (!row) return res.status(404).json({ error: "Not found" });
-  const searchText = normalizeSearchText([productName, content, row.ocr_text, row.original_name].join(" "));
-  const result = db.prepare("UPDATE products SET product_name = ?, content = ?, search_text = ? WHERE id = ?").run(productName, content, searchText, req.params.id);
-  if (!result.changes) return res.status(404).json({ error: "Not found" });
-  res.json({ ok: true });
-});
-
 app.post("/api/reindex-ocr", requireAdmin, async (req, res) => {
+  if (!requireSupabase(res)) return;
   try {
-    await reindexMissingOcr();
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("OCR reindex failed:", e);
+    const { data: products, error } = await supabase.from("products")
+      .select("id,filename,original_name,product_name,content,storage_path");
+
+    if (error) throw error;
+
+    let updated = 0;
+    for (const p of products || []) {
+      const { data: file, error: downloadError } = await supabase.storage
+        .from(SUPABASE_BUCKET).download(p.storage_path);
+      if (downloadError) {
+        console.error("Download error:", downloadError);
+        continue;
+      }
+
+      const buffer = Buffer.from(await file.arrayBuffer());
+      let ocrText = "";
+      try { ocrText = await runOcr(buffer); } catch (err) { console.error("OCR error:", err); }
+
+      const patch = {
+        ocr_text: ocrText,
+        search_text: makeSearchText({
+          product_name: p.product_name,
+          content: p.content,
+          ocr_text: ocrText,
+          filename: p.filename,
+          original_name: p.original_name
+        })
+      };
+
+      const { error: updateError } = await supabase.from("products").update(patch).eq("id", p.id);
+      if (!updateError) updated++;
+    }
+
+    res.json({ ok: true, updated });
+  } catch (err) {
+    console.error("Reindex error:", err);
     res.status(500).json({ error: "OCR re-scan failed." });
   }
 });
 
-app.delete("/api/products/:id", requireAdmin, (req, res) => {
-  const row = db.prepare("SELECT filename FROM products WHERE id = ?").get(req.params.id);
-  if (!row) return res.status(404).json({ error: "Not found" });
-  const full = path.join(uploadDir, row.filename);
-  if (fs.existsSync(full)) fs.unlinkSync(full);
-  db.prepare("DELETE FROM products WHERE id = ?").run(req.params.id);
-  res.json({ ok: true });
+app.put("/api/products/:id", requireAdmin, async (req, res) => {
+  if (!requireSupabase(res)) return;
+  try {
+    const id = Number(req.params.id);
+    const { data: current, error: readError } = await supabase.from("products")
+      .select("id,filename,original_name,ocr_text").eq("id", id).single();
+    if (readError) throw readError;
+
+    const product_name = cleanText(req.body?.product_name);
+    const content = cleanText(req.body?.content);
+    const search_text = makeSearchText({
+      product_name, content,
+      ocr_text: current.ocr_text,
+      filename: current.filename,
+      original_name: current.original_name
+    });
+
+    const { data, error } = await supabase.from("products")
+      .update({ product_name, content, search_text })
+      .eq("id", id)
+      .select().single();
+
+    if (error) throw error;
+    res.json({ ...data, url: publicUrl(data.storage_path) });
+  } catch (err) {
+    console.error("Update error:", err);
+    res.status(500).json({ error: "Product update failed." });
+  }
 });
 
-app.use((err, req, res, next) => {
-  if (err) return res.status(400).json({ error: err.message || "Upload error" });
-  next();
+app.delete("/api/products/:id", requireAdmin, async (req, res) => {
+  if (!requireSupabase(res)) return;
+  try {
+    const id = Number(req.params.id);
+    const { data: p, error: readError } = await supabase.from("products")
+      .select("storage_path").eq("id", id).single();
+    if (readError) throw readError;
+
+    const { error: storageError } = await supabase.storage
+      .from(SUPABASE_BUCKET).remove([p.storage_path]);
+    if (storageError) console.error("Storage delete error:", storageError);
+
+    const { error } = await supabase.from("products").delete().eq("id", id);
+    if (error) throw error;
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Delete error:", err);
+    res.status(500).json({ error: "Delete failed." });
+  }
+});
+
+app.use((err, _req, res, _next) => {
+  console.error("Request error:", err);
+  res.status(400).json({ error: err.message || "Request failed." });
 });
 
 app.listen(PORT, () => {
-  console.log(`Shivkamal Pharma running on http://localhost:${PORT}`);
-  reindexMissingOcr().catch(err => console.error("Startup OCR reindex failed:", err.message));
+  console.log(`Shivkamal Pharma running on port ${PORT}`);
+  if (supabase) {
+    ensureBucket()
+      .then(() => console.log(`Supabase storage bucket ready: ${SUPABASE_BUCKET}`))
+      .catch(err => console.error("Supabase startup error:", err.message));
+  } else {
+    console.error("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are missing.");
+  }
 });
