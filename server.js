@@ -42,6 +42,9 @@ app.use(session({
 
 // The project files are in the repository root.
 app.use(express.static(__dirname));
+app.get("/admin.html", (req, res) => {
+  res.sendFile(__dirname + "/admin.html");
+});
 
 function requireSupabase(res) {
   if (!supabase) {
