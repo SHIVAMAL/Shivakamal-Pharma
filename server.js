@@ -4,7 +4,7 @@ const multer = require("multer");
 const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
 const { createWorker } = require("tesseract.js");
-
+const sharp = require("sharp");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
