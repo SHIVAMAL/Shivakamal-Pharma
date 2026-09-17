@@ -94,13 +94,25 @@ async function getOcrWorker() {
     });
   }
   return ocrWorkerPromise;
-}
-
 async function runOcr(buffer) {
   const worker = await getOcrWorker();
-  const result = await worker.recognize(buffer);
+
+  const processed = await sharp(buffer)
+    .rotate()
+    .resize({ width: 2000, withoutEnlargement: false })
+    .grayscale()
+    .normalize()
+    .sharpen()
+    .png()
+    .toBuffer();
+
+  const result = await worker.recognize(processed);
+
   return cleanText(result?.data?.text || "");
 }
+
+
+
 
 async function ensureBucket() {
   if (!supabase) return;
