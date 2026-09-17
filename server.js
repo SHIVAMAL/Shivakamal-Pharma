@@ -341,7 +341,7 @@ app.listen(PORT, () => {
     
       
       
-  } else {
-    console.error("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are missing.");
-  }
+  
+    
+
 });
