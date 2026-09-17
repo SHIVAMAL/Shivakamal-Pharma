@@ -337,10 +337,10 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, () => {
   console.log(`Shivkamal Pharma running on port ${PORT}`);
-  if (supabase) {
-    ensureBucket()
-      .then(() => console.log(`Supabase storage bucket ready: ${SUPABASE_BUCKET}`))
-      .catch(err => console.error("Supabase startup error:", err.message));
+  
+    
+      
+      
   } else {
     console.error("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are missing.");
   }
