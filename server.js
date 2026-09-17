@@ -183,85 +183,172 @@ app.get("/api/products", async (req, res) => {
     res.status(500).json({ error: "Catalogue could not be loaded." });
   }
 });
-
 app.post("/api/upload", requireAdmin, upload.array("photos", 100), async (req, res) => {
   if (!requireSupabase(res)) return;
+
   const files = req.files || [];
-  if (!files.length) return res.status(400).json({ error: "No photos selected." });
+
+  if (!files.length) {
+    return res.status(400).json({ error: "No photos selected." });
+  }
 
   const added = [];
   const duplicates = [];
-  const results = [];
 
+  // FAST UPLOAD: फोटो आधी Storage + Database मध्ये save
   for (const file of files) {
-    const hash = sha256(file.buffer);
-
-    const { data: existing } = await supabase.from("products")
-      .select("id").eq("sha256", hash).maybeSingle();
-
-    if (existing) {
-      duplicates.push(file.originalname);
-      continue;
-    }
-
-    let ocrText = "";
     try {
-      ocrText = await runOcr(file.buffer);
-    } catch (err) {
-      console.error("OCR error:", err);
-    }
+      const hash = sha256(file.buffer);
 
-    const safeBase = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const storagePath = `medicines/${hash}-${safeBase}`;
+      const { data: existing } = await supabase
+        .from("products")
+        .select("id")
+        .eq("sha256", hash)
+        .maybeSingle();
 
-    const { error: storageError } = await supabase.storage
-      .from(SUPABASE_BUCKET)
-      .upload(storagePath, file.buffer, {
-        contentType: file.mimetype,
-        upsert: false
-      });
-
-    if (storageError) {
-      if (/already exists/i.test(storageError.message || "")) {
+      if (existing) {
         duplicates.push(file.originalname);
         continue;
       }
-      console.error("Storage upload error:", storageError);
-      continue;
-    }
 
-    const row = {
-      filename: safeBase,
-      original_name: file.originalname,
-      product_name: "",
-      content: "",
-      ocr_text: ocrText,
-      search_text: makeSearchText({
+      const safeBase = file.originalname.replace(
+        /[^a-zA-Z0-9._-]/g,
+        "_"
+      );
+
+      const storagePath = `medicines/${hash}-${safeBase}`;
+
+      const { error: storageError } = await supabase.storage
+        .from(SUPABASE_BUCKET)
+        .upload(storagePath, file.buffer, {
+          contentType: file.mimetype,
+          upsert: false
+        });
+
+      if (storageError) {
+        if (/already exists/i.test(storageError.message || "")) {
+          duplicates.push(file.originalname);
+          continue;
+        }
+
+        console.error("Storage upload error:", storageError);
+        continue;
+      }
+
+      const row = {
+        filename: safeBase,
+        original_name: file.originalname,
         product_name: "",
         content: "",
-        ocr_text: ocrText,
-        filename: safeBase,
-        original_name: file.originalname
-      }),
-      sha256: hash,
-      storage_path: storagePath
-    };
+        ocr_text: "",
+        search_text: safeBase,
+        sha256: hash,
+        storage_path: storagePath
+      };
 
-    const { data, error: dbError } = await supabase.from("products")
-      .insert(row).select("id,filename,original_name,product_name,content,ocr_text,search_text,sha256,storage_path,created_at").single();
+      const { data, error: dbError } = await supabase
+        .from("products")
+        .insert(row)
+        .select()
+        .single();
 
-    if (dbError) {
-      await supabase.storage.from(SUPABASE_BUCKET).remove([storagePath]);
-      console.error("Database insert error:", dbError);
-      continue;
+      if (dbError) {
+        await supabase.storage
+          .from(SUPABASE_BUCKET)
+          .remove([storagePath]);
+
+        console.error("Database insert error:", dbError);
+        continue;
+      }
+
+      added.push(data);
+
+    } catch (err) {
+      console.error("Upload error:", err);
     }
-
-    added.push(data);
-    results.push({ file: file.originalname, detected: ocrText.slice(0, 300) });
   }
 
-  res.json({ added, duplicates, results });
+  // फोटो upload झाल्यावर लगेच response
+  res.json({
+    added,
+    duplicates,
+    results: [],
+    message: `${added.length} photos uploaded successfully. OCR background मध्ये चालू आहे.`
+  });
+
+  // BACKGROUND OCR
+  setImmediate(async () => {
+    for (const p of added) {
+      try {
+        const { data: file, error: downloadError } =
+          await supabase.storage
+            .from(SUPABASE_BUCKET)
+            .download(p.storage_path);
+
+        if (downloadError) {
+          console.error("OCR download error:", downloadError);
+          continue;
+        }
+
+        const buffer = Buffer.from(
+          await file.arrayBuffer()
+        );
+
+        let ocrText = "";
+
+        try {
+          ocrText = await runOcr(buffer);
+        } catch (ocrError) {
+          console.error(
+            `OCR error for ${p.original_name}:`,
+            ocrError
+          );
+        }
+
+        const search_text = makeSearchText({
+          product_name: p.product_name,
+          content: p.content,
+          ocr_text: ocrText,
+          filename: p.filename,
+          original_name: p.original_name
+        });
+
+        const { error: updateError } =
+          await supabase
+            .from("products")
+            .update({
+              ocr_text,
+              search_text
+            })
+            .eq("id", p.id);
+
+        if (updateError) {
+          console.error(
+            "OCR database update error:",
+            updateError
+          );
+        } else {
+          console.log(
+            `OCR completed: ${p.original_name}`
+          );
+        }
+
+      } catch (err) {
+        console.error(
+          `Background OCR failed for ${p.original_name}:`,
+          err
+        );
+      }
+    }
+
+    console.log(
+      `Background OCR finished for ${added.length} photos.`
+    );
+  });
 });
+
+
+  
 
 app.post("/api/reindex-ocr", requireAdmin, async (req, res) => {
   if (!requireSupabase(res)) return;
