@@ -94,6 +94,7 @@ async function getOcrWorker() {
     });
   }
   return ocrWorkerPromise;
+  }
 async function runOcr(buffer) {
   const worker = await getOcrWorker();
 
