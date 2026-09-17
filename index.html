@@ -4,4 +4,62 @@
 <body><header><div class="nav"><img class="logo" src="/logo.jpg" onerror="this.style.display='none'"><div><div class="brand">SHIVKAMAL PHARMA</div><div class="sub">Wholesale Medicine Catalogue • Latur</div></div><div class="spacer"></div><a class="admin" href="/admin.html">Admin</a></div></header>
 <section class="hero"><div class="heroCard"><img class="heroImg" src="/shop.jpg"><div class="heroText"><h1>Shivkamal Pharma</h1><p>औषधांची आणि उपलब्ध products ची photo catalogue. Customer फक्त catalogue पाहू शकतो; फोटो upload करण्याचा अधिकार फक्त Admin कडे आहे.</p><p><b>पत्ता:</b> दुकान नं. 62, आदर्श शॉपिंग कॉम्प्लेक्स, आदर्श कॉलनी, औसा रोड, लातूर</p><p><b>मो:</b> 9067239822</p></div></div></section>
 <div class="search"><input id="q" placeholder="🔍 Brand / Medicine / Content (Salt) search करा..."></div><div class="searchHint">उदा. <b>Oframax</b> किंवा <b>Ceftriaxone</b> search करा — OCR ने फोटोमधील text पण शोधला जाईल.</div><section class="gallery" id="gallery"><div class="empty">Catalogue loading...</div></section>
-<script>let all=[];async function load(){const r=await fetch('/api/products');all=await r.json();render()}function hay(x){return String(x.search_text||[x.product_name,x.content,x.ocr_text,x.original_name].filter(Boolean).join(" ")).normalize("NFKC").toLowerCase()}function render(){const q=document.getElementById('q').value.toLowerCase().trim();const rows=all.filter(x=>hay(x).includes(q));const g=document.getElementById('gallery');g.innerHTML=rows.length?rows.map(x=>`<div class="card"><img src="${x.url}" loading="lazy"><div class="caption"><b>${esc(x.product_name||x.original_name)}</b>${x.content?`<br><small>Content: ${esc(x.content)}</small>`:''}</div></div>`).join(''):'<div class="empty">या search साठी फोटो सापडला नाही.</div>'}function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}document.getElementById('q').addEventListener('input',render);load();</script></body></html>
+<script>
+let all=[];
+
+async function load(){
+  const r=await fetch('/api/products');
+  all=await r.json();
+  render();
+}
+
+function hay(x){
+  return [
+    x.product_name,
+    x.content,
+    x.ocr_text,
+    x.original_name,
+    x.search_text
+  ]
+  .filter(Boolean)
+  .join(" ")
+  .normalize("NFKC")
+  .toLowerCase();
+}
+
+function render(){
+  const q=document.getElementById('q').value
+    .normalize("NFKC")
+    .toLowerCase()
+    .trim();
+
+  const rows=all.filter(x=>hay(x).includes(q));
+
+  const g=document.getElementById('gallery');
+
+  g.innerHTML=rows.length
+    ? rows.map(x=>`
+      <div class="card">
+        <img src="${x.url}" loading="lazy">
+        <div class="caption">
+          <b>${esc(x.product_name||x.original_name)}</b>
+          ${x.content?`<br><small>Content: ${esc(x.content)}</small>`:''}
+        </div>
+      </div>
+    `).join('')
+    : '<div class="empty">या search साठी फोटो सापडला नाही.</div>';
+}
+
+function esc(s){
+  return String(s).replace(/[&<>"']/g,m=>({
+    '&':'&amp;',
+    '<':'&lt;',
+    '>':'&gt;',
+    '"':'&quot;',
+    "'":'&#39;'
+  }[m]));
+}
+
+document.getElementById('q').addEventListener('input',render);
+load();
+    </script>
