@@ -122,7 +122,11 @@ async function getProducts(q = "") {
     .select("id,filename,original_name,product_name,content,ocr_text,search_text,sha256,storage_path,created_at")
     .order("created_at", { ascending: false });
 
-  if (q) query = query.ilike("search_text", `%${q}%`);
+  if (q) {
+  query = query.or(
+    `product_name.ilike.%${q}%,content.ilike.%${q}%,ocr_text.ilike.%${q}%,original_name.ilike.%${q}%,filename.ilike.%${q}%`
+  );
+}
 
   const { data, error } = await query;
   if (error) throw error;
