@@ -127,7 +127,18 @@ async function getProducts(q = "") {
   const { data, error } = await query;
   if (error) throw error;
 
-  return (data || []).map(p => ({ ...p, url: publicUrl(p.storage_path) }));
+  const rows = data || [];
+
+return await Promise.all(rows.map(async p => {
+  const { data: signed } = await supabase.storage
+    .from(SUPABASE_BUCKET)
+    .createSignedUrl(p.storage_path, 3600);
+
+  return {
+    ...p,
+    url: signed?.signedUrl || ''
+  };
+}));
 }
 
 app.get("/api/me", (req, res) => res.json({ admin: !!req.session.admin }));
