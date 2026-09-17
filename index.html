@@ -58,8 +58,11 @@ function esc(s){
     '"':'&quot;',
     "'":'&#39;'
   }[m]));
-}
-
-document.getElementById('q').addEventListener('input',render);
+document.getElementById('q').addEventListener('input', async function(){
+  const q = this.value.trim();
+  const r = await fetch('/api/products?q=' + encodeURIComponent(q));
+  all = await r.json();
+  render();
+});
 load();
     </script>
