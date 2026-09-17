@@ -95,23 +95,54 @@ async function getOcrWorker() {
   }
   return ocrWorkerPromise;
   }
+
 async function runOcr(buffer) {
   const worker = await getOcrWorker();
 
-  const processed = await sharp(buffer)
-    .rotate()
-    .resize({ width: 2000, withoutEnlargement: false })
-    .grayscale()
-    .normalize()
-    .sharpen()
-    .png()
-    .toBuffer();
+  const variants = [];
 
-  const result = await worker.recognize(processed);
+  // Normal enhanced image
+  variants.push(
+    await sharp(buffer)
+      .rotate()
+      .resize({ width: 2200, withoutEnlargement: false })
+      .grayscale()
+      .normalize()
+      .sharpen()
+      .png()
+      .toBuffer()
+  );
 
-  return cleanText(result?.data?.text || "");
+  // High contrast image
+  variants.push(
+    await sharp(buffer)
+      .rotate()
+      .resize({ width: 2200, withoutEnlargement: false })
+      .grayscale()
+      .normalize()
+      .threshold(170)
+      .png()
+      .toBuffer()
+  );
+
+  const texts = [];
+
+  for (const image of variants) {
+    try {
+      const result = await worker.recognize(image);
+      const text = cleanText(result?.data?.text || "");
+
+      if (text) {
+        texts.push(text);
+      }
+    } catch (err) {
+      console.error("OCR variant error:", err);
+    }
+  }
+
+  // दोन्ही OCR results एकत्र
+  return cleanText(texts.join(" "));
 }
-
 
 
 
