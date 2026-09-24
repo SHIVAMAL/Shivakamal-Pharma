@@ -63,9 +63,7 @@ function render(){
       </div>
     `).join('')
     : '<div class="empty">या search साठी फोटो सापडला नाही.</div>';
-}
-
-function esc(s){
+}function esc(s){
   return String(s).replace(/[&<>"']/g,m=>({
     '&':'&amp;',
     '<':'&lt;',
@@ -73,8 +71,20 @@ function esc(s){
     '"':'&quot;',
     "'":'&#39;'
   }[m]));
-} document.getElementById('q').addEventListener('input', render);
+}
 
+document.getElementById('q').addEventListener('input', async function(){
+  const q = this.value.trim();
+
+  const r = await fetch('/api/products?q=' + encodeURIComponent(q));
+
+  if (!r.ok) return;
+
+  all = await r.json();
+  render();
+});
 
 load();
+
+
     </script>
