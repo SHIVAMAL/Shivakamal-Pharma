@@ -162,33 +162,53 @@ async function ensureBucket() {
 
 async function getProducts(q = "") {
   if (!supabase) return null;
-  let query = supabase.from("products")
+
+  let query = supabase
+    .from("products")
     .select("id,filename,original_name,product_name,content,ocr_text,search_text,sha256,storage_path,created_at")
     .order("created_at", { ascending: false });
 
   if (q) {
-  query = query.or(
-    `product_name.ilike.%${q}%,content.ilike.%${q}%,ocr_text.ilike.%${q}%,original_name.ilike.%${q}%,filename.ilike.%${q}%`
-  );
-}
+    query = query.or(
+      `product_name.ilike.%${q}%,content.ilike.%${q}%,ocr_text.ilike.%${q}%,original_name.ilike.%${q}%,filename.ilike.%${q}%`
+    );
+  }
 
   const { data, error } = await query;
+
   if (error) throw error;
 
   const rows = data || [];
 
-return await Promise.all(rows.map(async p => {
-  const { data: signed } = await supabase.storage
-    .from(SUPABASE_BUCKET)
-    .createSignedUrl(p.storage_path, 3600);
+  if (!rows.length) return [];
 
-  return {
+  const paths = rows
+    .map(p => p.storage_path)
+    .filter(Boolean);
+
+  let signed = [];
+
+  try {
+    const result = await supabase.storage
+      .from(SUPABASE_BUCKET)
+      .createSignedUrls(paths, 3600);
+
+    if (result.error) throw result.error;
+
+    signed = result.data || [];
+  } catch (err) {
+    console.error("Signed URLs error:", err);
+  }
+
+  const urlMap = new Map(
+    signed.map(x => [x.path, x.signedUrl])
+  );
+
+  return rows.map(p => ({
     ...p,
-    url: signed?.signedUrl || ''
-  };
-}));
+    url: urlMap.get(p.storage_path) || ""
+  }));
 }
-
 app.get("/api/me", (req, res) => res.json({ admin: !!req.session.admin }));
 
 app.post("/api/login", (req, res) => {
