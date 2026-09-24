@@ -18,7 +18,7 @@ let all=[];
   .join(" ")
   .normalize("NFKC")
   .toLowerCase()
-  .replace(/[^a-z0-9]+/g, "");
+  .replace(/[^\p{L}\p{N}]+/gu, "");
 } 
 
 async function load(){
@@ -45,7 +45,8 @@ function render(){
   const q=document.getElementById('q').value
   .normalize("NFKC")
   .toLowerCase()
-  .replace(/[^a-z0-9]+/g, "");
+ .replace(/[^\p{L}\p{N}]+/gu, "");
+  
 
   const rows=all.filter(x=>hay(x).includes(q));
 
