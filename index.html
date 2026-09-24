@@ -22,9 +22,21 @@ function hay(x){
   .replace(/[^a-z0-9]+/g, "");
 }
 async function load(){
-  const r=await fetch('/api/products');
-  all=await r.json();
-  render();
+  try {
+    const r = await fetch('/api/products');
+
+    if (!r.ok) {
+      throw new Error('Catalogue load failed');
+    }
+
+    all = await r.json();
+    render();
+
+  } catch (e) {
+    console.error(e);
+    document.getElementById('gallery').innerHTML =
+      '<div class="empty">Catalogue load failed. Please refresh.</div>';
+  }
 }
 
 
