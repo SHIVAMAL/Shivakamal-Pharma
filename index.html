@@ -6,8 +6,7 @@
 <div class="search"><input id="q" placeholder="🔍 Brand / Medicine / Content (Salt) search करा..."></div><div class="searchHint">उदा. <b>Oframax</b> किंवा <b>Ceftriaxone</b> search करा — OCR ने फोटोमधील text पण शोधला जाईल.</div><section class="gallery" id="gallery"><div class="empty">Catalogue loading...</div></section>
 <script>
 let all=[];
-  
-function hay(x){
+ function hay(x){
   return [
     x.product_name,
     x.content,
@@ -20,7 +19,8 @@ function hay(x){
   .normalize("NFKC")
   .toLowerCase()
   .replace(/[^a-z0-9]+/g, "");
-}
+} 
+
 async function load(){
   try {
     const r = await fetch('/api/products');
@@ -43,9 +43,9 @@ async function load(){
 
 function render(){
   const q=document.getElementById('q').value
-    .normalize("NFKC")
-    .toLowerCase()
-    .trim();
+  .normalize("NFKC")
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, "");
 
   const rows=all.filter(x=>hay(x).includes(q));
 
