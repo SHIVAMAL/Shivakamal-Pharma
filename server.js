@@ -368,7 +368,7 @@ app.post("/api/upload", requireAdmin, upload.array("photos", 100), async (req, r
           await supabase
             .from("products")
             .update({
-              ocr_text,
+              ocr_text: ocrText,
               search_text
             })
             .eq("id", p.id);
