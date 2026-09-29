@@ -73,16 +73,7 @@ function render(){
   }[m]));
 }
 
-document.getElementById('q').addEventListener('input', async function(){
-  const q = this.value.trim();
-
-  const r = await fetch('/api/products?q=' + encodeURIComponent(q));
-
-  if (!r.ok) return;
-
-  all = await r.json();
-  render();
-});
+document.getElementById('q').addEventListener('input', render);
 
 load();
 
