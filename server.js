@@ -101,11 +101,10 @@ async function runOcr(buffer) {
 
   const variants = [];
 
-  // Normal enhanced image
   variants.push(
     await sharp(buffer)
       .rotate()
-      .resize({ width: 2200, withoutEnlargement: false })
+      .resize({ width: 2500, withoutEnlargement: false })
       .grayscale()
       .normalize()
       .sharpen()
@@ -113,14 +112,13 @@ async function runOcr(buffer) {
       .toBuffer()
   );
 
-  // High contrast image
   variants.push(
     await sharp(buffer)
       .rotate()
-      .resize({ width: 2200, withoutEnlargement: false })
+      .resize({ width: 2500, withoutEnlargement: false })
       .grayscale()
       .normalize()
-      .threshold(170)
+      .threshold(160)
       .png()
       .toBuffer()
   );
@@ -129,18 +127,22 @@ async function runOcr(buffer) {
 
   for (const image of variants) {
     try {
+      await worker.setParameters({
+        tessedit_pageseg_mode: "6"
+      });
+
       const result = await worker.recognize(image);
       const text = cleanText(result?.data?.text || "");
 
       if (text) {
         texts.push(text);
       }
+
     } catch (err) {
       console.error("OCR variant error:", err);
     }
   }
 
-  // दोन्ही OCR results एकत्र
   return cleanText(texts.join(" "));
 }
 
